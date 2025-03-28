@@ -4,7 +4,7 @@ from app.core.service.task import TaskService
 from app.db import Task, StatusTask
 from app.core.schemas.task import TaskCreate, TaskUpdate, TaskRead
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import HTTPException
 
 @pytest.fixture
@@ -55,8 +55,8 @@ async def test_update_task_status_success(mock_session):
         id=1,
         title="Test",
         status=StatusTask.NEW_TASK,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow()
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc)
     )
     mock_session.get.return_value = original_task
     service = TaskService(mock_session)

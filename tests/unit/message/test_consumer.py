@@ -1,35 +1,38 @@
+from typing import Any
 import pytest
 from unittest.mock import AsyncMock, patch
-from app.message.producer import publish_task
-from aio_pika.exceptions import AMQPConnectionError
+from aio_pika.abc import AbstractIncomingMessage
+
+from app.message.consumer import process_single_message
 
 @pytest.mark.asyncio
-async def test_publish_task_success():
-    with patch('app.message.producer.get_rabbitmq_connection') as mock_conn:
-        mock_channel = AsyncMock()
-        mock_conn.return_value.__aenter__.return_value.channel.return_value = mock_channel
+async def test_process_valid_message():
+    mock_message = AsyncMock(spec=AbstractIncomingMessage)
+    mock_message.body.decode.return_value = '{"task_id": 123}'
+    mock_message.headers = {"retry_count": 0}
+    
+    with patch('app.message.consumer.process_task') as mock_process:
+        await process_single_message(mock_message)
         
-        await publish_task(123)
-        
-        mock_channel.declare_queue.assert_awaited_once()
-        mock_channel.default_exchange.publish.assert_awaited_once()
-        
-@pytest.mark.asyncio
-async def test_publish_task_retry_on_connection_error():
-    with patch('app.message.producer.get_rabbitmq_connection', 
-              side_effect=AMQPConnectionError) as mock_conn:
-        with pytest.raises(AMQPConnectionError):
-            await publish_task(123)
-        assert mock_conn.call_count == 3
+        mock_process.assert_awaited_once_with(123)
+        mock_message.ack.assert_awaited_once()
 
 @pytest.mark.asyncio
-async def test_message_properties():
-    with patch('app.message.producer.get_rabbitmq_connection') as mock_conn:
-        mock_channel = AsyncMock()
-        mock_conn.return_value.__aenter__.return_value.channel.return_value = mock_channel
+async def test_invalid_message_format():
+    mock_message = AsyncMock()
+    mock_message.body.decode.return_value = 'invalid_json'
+    
+    with patch('app.message.consumer.logger') as mock_logger:
+        await process_single_message(mock_message)
         
-        await publish_task(123)
+        mock_logger.error.assert_called_with("JSON decode error: %s", Any)
+
+@pytest.mark.asyncio
+async def test_missing_task_id():
+    mock_message = AsyncMock()
+    mock_message.body.decode.return_value = '{"wrong_field": 123}'
+    
+    with patch('app.message.consumer.logger') as mock_logger:
+        await process_single_message(mock_message)
         
-        message = mock_channel.default_exchange.publish.call_args[0][0]
-        assert message.delivery_mode == 2  # PERSISTENT
-        assert message.headers["service"] == "task-manager"
+        mock_logger.warning.assert_called_with("Invalid message format: missing task_id")
